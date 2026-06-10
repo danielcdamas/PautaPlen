@@ -1,0 +1,49 @@
+name: Diagnostico da busca
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnosticar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar as dependências
+        run: pip install -r requirements.txt
+
+      - name: Investigar o que o site da Câmara realmente retorna
+        run: |
+          python - <<'EOF'
+          import re
+          from bs4 import BeautifulSoup
+          from pauta_camara.fetcher import CamaraFetcher, find_session_by_date
+
+          f = CamaraFetcher()
+          html = f.fetch_sessions_page()
+          print("HTML da pagina do plenario baixado:", "SIM" if html else "NAO")
+
+          if html:
+              soup = BeautifulSoup(html, "html.parser")
+              print("\n===== LINKS que mencionam 'Sess' ou uma data =====")
+              mostrados = 0
+              for a in soup.find_all("a", href=True):
+                  texto = a.get_text(strip=True)
+                  if ("sess" in texto.lower()) or re.search(r"\d{1,2}/\d{1,2}", texto):
+                      print(repr(texto[:90]), "->", (a.get("href") or "")[:90])
+                      mostrados += 1
+                      if mostrados >= 40:
+                          break
+              print(f"\nTotal de links relevantes mostrados: {mostrados}")
+
+          print("\n===== TESTE: find_session_by_date em algumas datas =====")
+          for d in ["10/06/26", "09/06/26", "04/06/26", "02/06/26"]:
+              resultado = find_session_by_date(d)
+              print(f"{d} -> {resultado}")
+          EOF
