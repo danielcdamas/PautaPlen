@@ -1,0 +1,2 @@
+# PautaPlen
+Pauta automatica
