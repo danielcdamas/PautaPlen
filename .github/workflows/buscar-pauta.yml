@@ -7,6 +7,10 @@ on:
         description: "Data da sessão (DD/MM/AA)"
         required: true
         default: "10/06/26"
+      explicar:
+        description: "Gerar explicações com IA (Gemini)? (sim/nao)"
+        required: false
+        default: "nao"
 
 jobs:
   buscar:
@@ -24,6 +28,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Buscar a pauta de verdade na API da Câmara
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EXPLICAR: ${{ inputs.explicar }}
         run: python -m pauta_camara.main "${{ inputs.data }}" .
 
       - name: Mostrar os arquivos gerados
@@ -41,4 +48,3 @@ jobs:
         with:
           name: pauta
           path: pautas/
-          if-no-files-found: ignore
