@@ -1,0 +1,44 @@
+name: Buscar pauta (real)
+
+on:
+  workflow_dispatch:
+    inputs:
+      data:
+        description: "Data da sessão (DD/MM/AA)"
+        required: true
+        default: "10/06/26"
+
+jobs:
+  buscar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar as dependências
+        run: pip install -r requirements.txt
+
+      - name: Buscar a pauta de verdade na API da Câmara
+        run: python -m pauta_camara.main "${{ inputs.data }}" .
+
+      - name: Mostrar os arquivos gerados
+        if: always()
+        run: |
+          echo "===== Arquivos na pasta pautas/ ====="
+          ls -la pautas || echo "(pasta pautas nao foi criada)"
+          echo ""
+          echo "===== Conteudo do TXT ====="
+          cat pautas/*.txt || echo "(nenhum txt gerado)"
+
+      - name: Guardar a pauta para download
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pauta
+          path: pautas/
+          if-no-files-found: ignore
