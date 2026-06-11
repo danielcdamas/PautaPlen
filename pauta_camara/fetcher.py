@@ -7,7 +7,9 @@ e parou de funcionar quando o layout do site mudou. A API é estável e
 devolve os dados já estruturados em JSON.
 """
 
+import io
 import requests
+import PyPDF2
 from typing import Optional, List, Dict
 
 
@@ -87,6 +89,56 @@ def fetch_pauta_items(evento_id: int) -> List[Dict]:
     except requests.RequestException as e:
         print(f"Erro ao buscar a pauta do evento {evento_id}: {e}")
         return []
+
+
+def fetch_proposicao_detalhe(prop_id: int) -> Dict:
+    """
+    Busca os detalhes de uma proposição pela API (inclui 'ementaDetalhada'
+    e 'urlInteiroTeor').
+    Retorna um dict (vazio em caso de erro).
+    """
+    try:
+        resp = requests.get(
+            f"{API_BASE}/proposicoes/{prop_id}",
+            headers=HEADERS,
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json().get("dados", {}) or {}
+    except requests.RequestException as e:
+        print(f"Erro ao buscar detalhe da proposição {prop_id}: {e}")
+        return {}
+
+
+def fetch_inteiro_teor_texto(url: Optional[str], max_chars: int = 12000) -> str:
+    """
+    Baixa o PDF do inteiro teor de uma proposição e devolve o texto extraído,
+    limitado a `max_chars` caracteres (para controlar o custo da IA).
+    Retorna string vazia se não houver URL ou em caso de erro.
+    """
+    if not url:
+        return ""
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f"  (falha ao baixar inteiro teor: {e})")
+        return ""
+
+    try:
+        leitor = PyPDF2.PdfReader(io.BytesIO(resp.content))
+        partes = []
+        total = 0
+        for pagina in leitor.pages:
+            texto = pagina.extract_text() or ""
+            partes.append(texto)
+            total += len(texto)
+            if total >= max_chars:
+                break
+        return "\n".join(partes)[:max_chars].strip()
+    except Exception as e:
+        print(f"  (falha ao ler o PDF do inteiro teor: {e})")
+        return ""
 
 
 if __name__ == "__main__":
