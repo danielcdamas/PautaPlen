@@ -3,6 +3,7 @@ Função principal do agente Pauta Câmara.
 
 Fluxo: dada uma data (DD/MM/AA), encontra a Sessão Deliberativa do plenário
 pela API de Dados Abertos, baixa a pauta já estruturada e salva em JSON e TXT.
+Opcionalmente, gera uma explicação em linguagem natural de cada item (via Gemini).
 """
 
 import os
@@ -11,8 +12,14 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict
 
-from .fetcher import find_session_by_date, fetch_pauta_items
+from .fetcher import (
+    find_session_by_date,
+    fetch_pauta_items,
+    fetch_proposicao_detalhe,
+    fetch_inteiro_teor_texto,
+)
 from .cleaner import truncate_ementa
+from . import explicador
 
 
 # Mapeia a sigla do tipo (vinda da API) para um nome legível.
@@ -71,13 +78,41 @@ def _item_para_proposicao(item: Dict, numero: int) -> Dict:
 
     return {
         'numero': numero,
+        'id_proposicao': prop.get('id'),
         'tipo': nome_tipo,
         'identificacao': identificacao,
         'ementa': ementa,
         'ementa_truncada': ementa_truncada,
         'regime': item.get("regime"),
         'relator': relator.get("nome"),
+        'explicacao': None,
     }
+
+
+def _enriquecer_com_explicacoes(proposicoes: List[Dict]) -> None:
+    """
+    Para cada proposição, busca o texto-base e gera uma explicação via IA.
+    Altera a lista no lugar (preenche o campo 'explicacao').
+    """
+    print("\n[IA] Gerando explicações das proposições...")
+    for prop in proposicoes:
+        id_prop = prop.get('id_proposicao')
+
+        # Base do texto, em ordem de preferência:
+        #   1) inteiro teor (PDF completo), 2) ementa detalhada, 3) ementa curta.
+        base_ementa = prop.get('ementa') or ''
+        if id_prop:
+            detalhe = fetch_proposicao_detalhe(id_prop)
+            texto_inteiro = fetch_inteiro_teor_texto(detalhe.get('urlInteiroTeor'))
+            if texto_inteiro:
+                base_ementa = texto_inteiro
+            else:
+                base_ementa = (detalhe.get('ementaDetalhada') or '').strip() or base_ementa
+
+        explicacao = explicador.explicar(prop['identificacao'], base_ementa)
+        prop['explicacao'] = explicacao
+        if explicacao:
+            print(f"  ✓ {prop['identificacao']}")
 
 
 def save_pauta_json(proposicoes: List[Dict], json_path: str, sessao: Dict, date_str: str) -> str:
@@ -110,17 +145,25 @@ def save_pauta_txt(proposicoes: List[Dict], txt_path: str, sessao: Dict, date_st
             f.write(f"   Tipo: {prop['tipo']}\n")
             if prop.get('regime'):
                 f.write(f"   Regime: {prop['regime']}\n")
-            f.write(f"   Ementa: {prop['ementa_truncada']}\n\n")
+            f.write(f"   Ementa: {prop['ementa_truncada']}\n")
+            if prop.get('explicacao'):
+                f.write(f"\n   Explicação:\n   {prop['explicacao']}\n")
+            f.write("\n")
     print(f"TXT salvo: {txt_path}")
     return txt_path
 
 
-def fetch_pauta_by_date(date_str: str, workspace_path: str, confirm_download: bool = True) -> Dict:
+def fetch_pauta_by_date(date_str: str, workspace_path: str,
+                        confirm_download: bool = True, explicar: bool = False) -> Dict:
     """
     Coordena a busca da pauta de uma data (DD/MM/AA) via API.
 
-    O parâmetro confirm_download é mantido por compatibilidade, mas não é
-    mais usado: a API não exige download de PDF, então não há o que confirmar.
+    Args:
+        explicar: se True, gera uma explicação por item usando a IA (Gemini).
+                  Requer a variável de ambiente GEMINI_API_KEY.
+
+    O parâmetro confirm_download é mantido por compatibilidade, mas não é mais
+    usado: a API não exige download de PDF, então não há o que confirmar.
     """
     resultado = {
         'sucesso': False,
@@ -157,6 +200,10 @@ def fetch_pauta_by_date(date_str: str, workspace_path: str, confirm_download: bo
         print(f"⚠ {resultado['mensagem']}")
         return resultado
     print(f"✓ {len(proposicoes)} proposições na pauta")
+
+    # Passo opcional: explicações via IA
+    if explicar:
+        _enriquecer_com_explicacoes(proposicoes)
 
     # Passo 3: salvar em JSON e TXT
     print(f"\n[3/3] Salvando arquivos...")
@@ -201,7 +248,10 @@ if __name__ == "__main__":
     date_str = sys.argv[1]
     workspace_path = sys.argv[2] if len(sys.argv) > 2 else "."
 
-    resultado = fetch_pauta_by_date(date_str, workspace_path)
+    # Ativa as explicações por IA se EXPLICAR=1/sim/true no ambiente.
+    explicar = os.environ.get("EXPLICAR", "").strip().lower() in ("1", "sim", "true", "yes", "s")
+
+    resultado = fetch_pauta_by_date(date_str, workspace_path, explicar=explicar)
 
     if resultado['sucesso']:
         print("\n✓ Sucesso! Verifique a pasta pautas/")
